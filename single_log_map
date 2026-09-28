@@ -1,0 +1,142 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+from scipy.signal import find_peaks
+
+
+
+
+def f(x,mu):
+    return mu*x*(1-x)
+param = np.array([3.52,3.54,3.56,3.58])
+nt =10000 
+tr = 5000
+data = np.zeros((nt,len(param)))
+for ii in range(len(param)):
+    x= np.random.random()
+    r = param[ii]
+    for t in range(nt+tr):
+        x_old =x
+        x= f(x,r)
+        x_new = x
+        if(t>=tr):
+            data[t-tr,ii:(ii+1)] = x 
+
+N = 400
+alpha =  0.99
+res_rho = 0.2
+res_k =100#8
+W_in_a =0.2#0.35#0.2
+beta = 1e-08#7e-09
+
+W = np.zeros((N,N))
+pr = res_k/(N-1)
+for i in range(N):
+    for j in range(N):
+        if((i!=j) and (np.random.random()<pr)):
+            W[i,j] =np.random.random()
+eig_val,eig_vec = np.linalg.eig(W)
+m = np.abs(eig_val).max()
+W= (res_rho/m)*W
+
+dim = 1
+W_in= np.zeros((N,dim+1))
+for i in range(N):
+    W_in[i,int(i*(dim)/N)] = W_in_a*(2*np.random.random() - 1)
+W_in[:,-1] = W_in_a*(2*np.random.random() - 1)  
+
+
+
+#...........Training.....................
+train_len = 3000
+trans = 1000
+res_store = train_len - trans
+
+R1 = np.zeros((N,len(param)*res_store))
+T = np.zeros((len(param)*res_store, 1))
+
+for ii in range(len(param)):
+    x = np.zeros(N)
+    xt = np.zeros(N)
+    tr_dat = data[:,ii]
+#         plt.plot(tr_dat[:100])
+#         plt.show()
+    # print(param[ii])
+    R = np.zeros((N,res_store))
+    for i in range(train_len):
+        u = tr_dat[i]      
+        u = np.append(u,param[ii])
+        x = (1 - alpha)*x + alpha*np.tanh(np.dot(W_in,u) + np.dot(W, x))
+        xt[:] = x[:]
+        xt[::2] = x[::2]**2   
+        if(i>=trans):  
+            R[:,i-trans] = xt[:]            
+    R1[:,ii*res_store:(ii+1)*res_store]= R
+    T[ii*res_store:(ii+1)*res_store, :] = tr_dat[trans+1:train_len+1].reshape(-1, 1) 
+T1 = T.T
+
+W_out= np.dot(np.dot(T1,R1.T),np.linalg.inv((np.dot(R1,R1.T)+beta*np.identity(N))))
+print("tr_done")
+
+
+pred_len = 4000
+warmup = 1000
+tr =200
+param_pred = np.arange(3.5,4.005,0.005)
+pred_data = np.zeros((pred_len,len(param_pred)))
+biff_pred=[]
+
+M_vals_pred = np.zeros(len(param_pred))
+for ii in range(len(param_pred)): 
+    xp = np.zeros(N)
+    xpt = np.zeros(N)
+    mu = param_pred[ii]
+#     print(mu)
+    s_pred= np.zeros(pred_len-tr)
+    up = np.random.random()
+    up = np.append(up,param_pred[ii])
+    for t in range (pred_len+warmup):
+        xp = (1 - alpha)*xp + alpha*np.tanh(np.dot(W_in,up) + np.dot(W, xp))   
+        xpt[:] = xp[:]  
+        xpt[::2] = xp[::2]**2 
+        if(t>=warmup):
+            pred_old = up[0]###########
+            up_pred = np.dot(W_out,xpt)
+            up_pred_trun = np.trunc(up_pred * 100) / 100
+            if (up_pred_trun>1 or up_pred_trun<0):
+                print(up_pred_trun,"*****************",mu)
+            up = np.append(up_pred,param_pred[ii]) 
+            pred_new = up[0]
+        if(t>=warmup+tr):
+            pred_data[t-(warmup),ii] = up_pred
+            biff_pred.append([mu,up_pred.item()])  
+            if(pred_new>pred_old):
+                s_pred[t-(warmup+tr)] = +1
+            if(pred_new<pred_old):
+                s_pred[t-(warmup+tr)] = -1
+
+    M_vals_pred[ii] = np.sum(s_pred) / (pred_len-tr)
+
+np.savetxt("pred_biff.txt",biff_pred)
+data0= np.loadtxt("pred_biff.txt") 
+mu_vals = data0[:, 0]
+pred_vals = data0[:, 1]
+
+plt.figure(figsize=(8, 6))
+plt.plot(mu_vals, pred_vals, 'r.', markersize=0.5, alpha=0.6)
+plt.title("Bifurcation Diagram (Predicted)", fontsize=14)
+plt.xlabel("Parameter (μ)", fontsize=12)
+plt.ylabel("Predicted Output", fontsize=12)
+plt.grid(True, linestyle='--', alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+
+plt.figure(figsize=(9, 6))
+plt.plot(param_pred, M_vals_pred, 'o-',label="predicted")
+plt.plot(param_plot, M_vals, 'o-',markersize=1)
+plt.xlabel(r'$\mu$')
+plt.ylabel('M')
+plt.title('Order parameter M vs control parameter')
+plt.legend()
+plt.show()
